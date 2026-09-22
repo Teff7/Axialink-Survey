@@ -1,1 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Confidence Survey</title>
+<link rel="icon" type="image/png" href="logo.png">
+<style>
+  :root {
+    --accent: #00b2a9;
+    --accent-2: #2bace2;
+    --ink: #1f2a37;
+    --ink-soft: #6b7684;
+    --line: #e6eaef;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: #ffffff;
+    color: var(--ink);
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+  }
+  .logo {
+    margin: 48px 0 0;
+  }
+  .logo img { width: 170px; height: auto; display: block; }
+  main {
+    flex: 1;
+    width: 100%;
+    max-width: 640px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 24px 16px 64px;
+  }
+  .question {
+    font-size: 1.45rem;
+    font-weight: 600;
+    line-height: 1.45;
+    text-align: center;
+    min-height: 4.4em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .scale { margin: 40px 0 8px; }
+  .scale-value {
+    text-align: center;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--accent);
+    margin-bottom: 14px;
+  }
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 6px;
+    border-radius: 3px;
+    background: linear-gradient(to right, var(--accent) 0%, var(--accent) 50%, var(--line) 50%, var(--line) 100%);
+    outline: none;
+    cursor: pointer;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: #fff;
+    border: 3px solid var(--accent);
+    box-shadow: 0 2px 6px rgba(0,0,0,.15);
+    cursor: pointer;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: #fff;
+    border: 3px solid var(--accent);
+    box-shadow: 0 2px 6px rgba(0,0,0,.15);
+    cursor: pointer;
+  }
+  .scale-labels {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 10px;
+    font-size: .85rem;
+    color: var(--ink-soft);
+  }
+  .nav {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 48px;
+    gap: 12px;
+  }
+  button {
+    font: inherit;
+    font-weight: 600;
+    padding: 12px 34px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--ink);
+    cursor: pointer;
+    transition: all .15s ease;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button.primary {
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    border: none;
+    color: #fff;
+  }
+  button.primary:hover:not(:disabled) { filter: brightness(1.06); color: #fff; }
+  button:disabled { opacity: 0; pointer-events: none; }
+  .done { text-align: center; display: none; }
+  .done h2 { font-size: 1.4rem; font-weight: 600; margin-bottom: 12px; }
+  .done p { color: var(--ink-soft); margin-bottom: 28px; line-height: 1.5; }
+  .error-note { color: #c0392b; font-size: .85rem; margin-top: 16px; display: none; }
+</style>
+</head>
+<body>
+  <div class="logo"><img src="logo.png" alt="Axialink Global Services"></div>
 
+  <main>
+    <div id="survey">
+      <div class="question" id="questionText"></div>
+      <div class="scale">
+        <div class="scale-value" id="scaleValue">50</div>
+        <input type="range" id="slider" min="0" max="100" step="1" value="50" aria-label="Agreement scale">
+        <div class="scale-labels"><span>Strongly disagree</span><span>Strongly agree</span></div>
+      </div>
+      <div class="nav">
+        <button id="backBtn">Back</button>
+        <button id="nextBtn" class="primary">Next</button>
+      </div>
+    </div>
+
+    <div class="done" id="done">
+      <h2>Thank you</h2>
+      <p>Your responses have been recorded anonymously.<br>Download your personal confidence score below — it is for your own private use.</p>
+      <button class="primary" id="downloadBtn">Download my results</button>
+      <div class="error-note" id="errorNote"></div>
+    </div>
+  </main>
+
+<script>
+const SUPABASE_URL = "https://hjkrhmrdaqtgsqaoijxv.supabase.co";
+const SUPABASE_KEY = "sb_publishable_6pD0XiYt69rnIXQIA_CVCQ_58vug8Ir";
+
+const QUESTIONS = [
+  "I feel confident using AI tools (e.g., Copilot, ChatGPT) in my day-to-day work.",
+  "I know when AI can help me complete a task more efficiently.",
+  "I know how to write effective prompts to get useful results from AI tools.",
+  "I trust the information provided by AI when completing work tasks.",
+  "I understand the limitations and risks of using AI-generated content.",
+  "I can confidently assess whether AI-generated information is accurate and appropriate before using it.",
+  "I know where to go for guidance, training, or support on using AI at work.",
+  "AI helps me improve the quality of my work.",
+  "I believe AI will have a positive impact on my role and career opportunities.",
+  "I am concerned that AI could reduce the need for skills or roles like mine in the future."
+];
+
+const CATEGORIES = [
+  { name: "Capability",         indices: [0, 1, 2] },
+  { name: "Trust & Governance", indices: [3, 4, 5] },
+  { name: "Support & Adoption", indices: [6, 7] },
+  { name: "Future Outlook",     indices: [8, 9] }
+];
+
+// Question 10 is reverse scored.
+const REVERSED = new Set([9]);
+
+const answers = new Array(QUESTIONS.length).fill(50);
+let current = 0;
+
+const questionText = document.getElementById("questionText");
+const slider = document.getElementById("slider");
+const scaleValue = document.getElementById("scaleValue");
+const backBtn = document.getElementById("backBtn");
+const nextBtn = document.getElementById("nextBtn");
+const surveyEl = document.getElementById("survey");
+const doneEl = document.getElementById("done");
+const errorNote = document.getElementById("errorNote");
+
+function paintSlider() {
+  const v = slider.value;
+  slider.style.background =
+    `linear-gradient(to right, var(--accent) 0%, var(--accent) ${v}%, var(--line) ${v}%, var(--line) 100%)`;
+  scaleValue.textContent = v;
+}
+
+function render() {
+  questionText.textContent = QUESTIONS[current];
+  slider.value = answers[current];
+  paintSlider();
+  backBtn.disabled = current === 0;
+  nextBtn.textContent = current === QUESTIONS.length - 1 ? "Submit" : "Next";
+}
+
+slider.addEventListener("input", () => {
+  answers[current] = Number(slider.value);
+  paintSlider();
+});
+
+backBtn.addEventListener("click", () => {
+  if (current > 0) { current--; render(); }
+});
+
+nextBtn.addEventListener("click", async () => {
+  answers[current] = Number(slider.value);
+  if (current < QUESTIONS.length - 1) {
+    current++;
+    render();
+    return;
+  }
+  nextBtn.textContent = "Submitting…";
+  nextBtn.style.pointerEvents = "none";
+  await submit();
+});
+
+function scored(i) {
+  return REVERSED.has(i) ? 100 - answers[i] : answers[i];
+}
+
+function categoryScores() {
+  const scores = {};
+  CATEGORIES.forEach(c => {
+    const total = c.indices.reduce((sum, i) => sum + scored(i), 0);
+    scores[c.name] = Math.round((total / c.indices.length) * 10) / 10;
+  });
+  const overall = Math.round(
+    (QUESTIONS.reduce((sum, _, i) => sum + scored(i), 0) / QUESTIONS.length) * 10
+  ) / 10;
+  return { scores, overall };
+}
+
+async function submit() {
+  const { scores, overall } = categoryScores();
+  const row = {
+    q1: answers[0], q2: answers[1], q3: answers[2], q4: answers[3], q5: answers[4],
+    q6: answers[5], q7: answers[6], q8: answers[7], q9: answers[8], q10: answers[9],
+    capability_score: scores["Capability"],
+    trust_governance_score: scores["Trust & Governance"],
+    support_adoption_score: scores["Support & Adoption"],
+    future_outlook_score: scores["Future Outlook"],
+    overall_score: overall
+  };
+
+  let saved = false;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/survey_responses`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": SUPABASE_KEY,
+        "Authorization": `Bearer ${SUPABASE_KEY}`,
+        "Prefer": "return=minimal"
+      },
+      body: JSON.stringify(row)
+    });
+    saved = res.ok;
+  } catch (e) {
+    saved = false;
+  }
+
+  surveyEl.style.display = "none";
+  doneEl.style.display = "block";
+  if (!saved) {
+    errorNote.textContent = "Note: your response could not be sent to the server, but you can still download your personal results.";
+    errorNote.style.display = "block";
+  }
+}
+
+function band(score) {
+  if (score >= 75) return "High confidence";
+  if (score >= 50) return "Moderate confidence";
+  if (score >= 25) return "Developing confidence";
+  return "Low confidence";
+}
+
+document.getElementById("downloadBtn").addEventListener("click", () => {
+  const { scores, overall } = categoryScores();
+  const date = new Date().toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+
+  const rows = CATEGORIES.map(c => `
+    <div class="row">
+      <div class="row-head"><span>${c.name}</span><span>${scores[c.name]} / 100</span></div>
+      <div class="bar"><div class="fill" style="width:${scores[c.name]}%"></div></div>
+      <div class="band">${band(scores[c.name])}</div>
+    </div>`).join("");
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Confidence Score</title>
+<style>
+  body { font-family: "Segoe UI", -apple-system, Roboto, Helvetica, Arial, sans-serif; background:#fff; color:#1f2a37; max-width:640px; margin:40px auto; padding:0 20px; }
+  h1 { font-size:1.5rem; margin-bottom:4px; }
+  .sub { color:#6b7684; margin-bottom:32px; font-size:.9rem; }
+  .overall { border:1px solid #e6eaef; border-radius:12px; padding:20px 24px; margin-bottom:32px; text-align:center; }
+  .overall .num { font-size:2.4rem; font-weight:700; color:#00b2a9; }
+  .overall .lbl { color:#6b7684; font-size:.9rem; }
+  .row { margin-bottom:24px; }
+  .row-head { display:flex; justify-content:space-between; font-weight:600; margin-bottom:8px; }
+  .bar { height:10px; background:#e6eaef; border-radius:5px; overflow:hidden; }
+  .fill { height:100%; background:linear-gradient(90deg,#00b2a9,#2bace2); border-radius:5px; }
+  .band { font-size:.85rem; color:#6b7684; margin-top:6px; }
+  .note { margin-top:36px; font-size:.8rem; color:#6b7684; border-top:1px solid #e6eaef; padding-top:16px; }
+</style>
+</head>
+<body>
+  <h1>Your AI Confidence Score</h1>
+  <div class="sub">Completed on ${date} · For your own private use</div>
+  <div class="overall">
+    <div class="num">${overall}</div>
+    <div class="lbl">Overall confidence (out of 100) — ${band(overall)}</div>
+  </div>
+  ${rows}
+  <div class="note">Scores are the average of your answers in each area on a 0–100 scale. The question about AI reducing the need for your skills is reverse scored, so higher scores always mean greater confidence.</div>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "ai-confidence-score.html";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+});
+
+render();
+</script>
+</body>
+</html>

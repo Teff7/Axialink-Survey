@@ -122,50 +122,8 @@
   .done p { color: var(--ink-soft); margin-bottom: 28px; line-height: 1.5; }
   .done-actions { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
   .error-note { color: #c0392b; font-size: .85rem; margin-top: 16px; display: none; }
-
-  /* Live results modal */
-  .modal-overlay {
-    position: fixed; inset: 0;
-    background: rgba(31, 42, 55, .45);
-    display: none;
-    align-items: center; justify-content: center;
-    padding: 16px;
-    z-index: 10;
-  }
-  .modal-overlay.open { display: flex; }
-  .modal {
-    background: #fff;
-    border-radius: 16px;
-    padding: 28px 28px 24px;
-    max-width: 560px;
-    width: 100%;
-    max-height: 90vh;
-    overflow-y: auto;
-    box-shadow: 0 12px 40px rgba(0,0,0,.18);
-    position: relative;
-  }
-  .modal h3 { font-size: 1.15rem; font-weight: 600; text-align: center; }
-  .modal .count { text-align: center; color: var(--ink-soft); font-size: .85rem; margin: 6px 0 20px; }
-  .modal-close {
-    position: absolute; top: 14px; right: 14px;
-    width: 34px; height: 34px; padding: 0;
-    border-radius: 50%;
-    font-size: 1rem; line-height: 1;
-  }
-  .gauges {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 20px 16px;
-  }
-  @media (max-width: 480px) { .gauges { grid-template-columns: 1fr; } }
-  .gauge { text-align: center; }
-  .gauge svg { width: 100%; max-width: 200px; height: auto; display: block; margin: 0 auto; }
-  .gauge .g-value { font-size: 1.3rem; font-weight: 700; color: var(--ink); margin-top: 8px; }
-  .gauge .g-label { font-size: .85rem; color: var(--ink-soft); margin-top: 2px; }
-  .gauge .g-arc { transition: stroke-dasharray .9s ease; }
-  .gauge .g-needle { transition: transform .9s ease; transform-origin: 100px 100px; }
-  .modal-empty { text-align: center; color: var(--ink-soft); padding: 24px 0; display: none; }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
 </head>
 <body>
   <div class="logo"><img src="logo.png" alt="Axialink Global Services"></div>
@@ -188,31 +146,11 @@
       <h2>Thank you</h2>
       <p>Your responses have been recorded anonymously.<br>Download your personal confidence score below — it is for your own private use.</p>
       <div class="done-actions">
-        <button class="primary" id="downloadBtn">Download my results</button>
-        <button id="liveResultsBtn">View live results</button>
+        <button class="primary" id="downloadBtn">Download my results (PDF)</button>
       </div>
       <div class="error-note" id="errorNote"></div>
     </div>
   </main>
-
-  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
-    <defs>
-      <linearGradient id="gaugeGrad" x1="0" y1="0" x2="1" y2="0">
-        <stop offset="0%" stop-color="#00b2a9"/>
-        <stop offset="100%" stop-color="#2bace2"/>
-      </linearGradient>
-    </defs>
-  </svg>
-
-  <div class="modal-overlay" id="modalOverlay">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-      <button class="modal-close" id="modalClose" aria-label="Close">✕</button>
-      <h3 id="modalTitle">Live results across all respondents</h3>
-      <div class="count" id="modalCount"></div>
-      <div class="gauges" id="gauges"></div>
-      <div class="modal-empty" id="modalEmpty">No results are available yet.</div>
-    </div>
-  </div>
 
 <script>
 const SUPABASE_URL = "https://hjkrhmrdaqtgsqaoijxv.supabase.co";
@@ -349,54 +287,152 @@ function band(score) {
   return "Low confidence";
 }
 
-document.getElementById("downloadBtn").addEventListener("click", () => {
+// Draws one speedometer dial (track, filled arc, needle) on a canvas and
+// returns it as a PNG data URL. Rendered at 2x for crispness in the PDF.
+function gaugeImage(value) {
+  const w = 400, h = 240;
+  const canvas = document.createElement("canvas");
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  const cx = 200, cy = 200, r = 150;
+  const pct = Math.max(0, Math.min(100, value)) / 100;
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, w, h);
+  ctx.lineCap = "round";
+  ctx.lineWidth = 26;
+
+  // Track
+  ctx.strokeStyle = "#e0f4f3";
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, Math.PI, 2 * Math.PI);
+  ctx.stroke();
+
+  // Filled arc
+  if (pct > 0) {
+    const grad = ctx.createLinearGradient(cx - r, 0, cx + r, 0);
+    grad.addColorStop(0, "#00b2a9");
+    grad.addColorStop(1, "#2bace2");
+    ctx.strokeStyle = grad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, Math.PI, Math.PI * (1 + pct));
+    ctx.stroke();
+  }
+
+  // Needle
+  const angle = Math.PI * (1 + pct);
+  ctx.strokeStyle = "#1f2a37";
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(cx + Math.cos(angle) * (r - 30), cy + Math.sin(angle) * (r - 30));
+  ctx.stroke();
+  ctx.fillStyle = "#1f2a37";
+  ctx.beginPath();
+  ctx.arc(cx, cy, 11, 0, 2 * Math.PI);
+  ctx.fill();
+
+  return canvas.toDataURL("image/jpeg", 0.92);
+}
+
+function loadLogoDataUrl() {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+      canvas.getContext("2d").drawImage(img, 0, 0);
+      try { resolve({ url: canvas.toDataURL("image/png"), w: img.naturalWidth, h: img.naturalHeight }); }
+      catch (e) { resolve(null); }
+    };
+    img.onerror = () => resolve(null);
+    img.src = "logo.png";
+  });
+}
+
+async function downloadPdf() {
   const { scores, overall } = categoryScores();
   const date = new Date().toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+  const doc = new jspdf.jsPDF({ unit: "mm", format: "a4" });
+  const pageW = 210;
+  const ink = [31, 42, 55], soft = [107, 118, 132], teal = [0, 178, 169];
 
-  const rows = CATEGORIES.map(c => `
-    <div class="row">
-      <div class="row-head"><span>${c.name}</span><span>${scores[c.name]} / 100</span></div>
-      <div class="bar"><div class="fill" style="width:${scores[c.name]}%"></div></div>
-      <div class="band">${band(scores[c.name])}</div>
-    </div>`).join("");
+  // Logo
+  const logo = await loadLogoDataUrl();
+  if (logo) {
+    const lw = 42, lh = lw * (logo.h / logo.w);
+    doc.addImage(logo.url, "PNG", (pageW - lw) / 2, 14, lw, lh);
+  }
 
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>AI Confidence Score</title>
-<style>
-  body { font-family: "Segoe UI", -apple-system, Roboto, Helvetica, Arial, sans-serif; background:#fff; color:#1f2a37; max-width:640px; margin:40px auto; padding:0 20px; }
-  h1 { font-size:1.5rem; margin-bottom:4px; }
-  .sub { color:#6b7684; margin-bottom:32px; font-size:.9rem; }
-  .overall { border:1px solid #e6eaef; border-radius:12px; padding:20px 24px; margin-bottom:32px; text-align:center; }
-  .overall .num { font-size:2.4rem; font-weight:700; color:#00b2a9; }
-  .overall .lbl { color:#6b7684; font-size:.9rem; }
-  .row { margin-bottom:24px; }
-  .row-head { display:flex; justify-content:space-between; font-weight:600; margin-bottom:8px; }
-  .bar { height:10px; background:#e6eaef; border-radius:5px; overflow:hidden; }
-  .fill { height:100%; background:linear-gradient(90deg,#00b2a9,#2bace2); border-radius:5px; }
-  .band { font-size:.85rem; color:#6b7684; margin-top:6px; }
-  .note { margin-top:36px; font-size:.8rem; color:#6b7684; border-top:1px solid #e6eaef; padding-top:16px; }
-</style>
-</head>
-<body>
-  <h1>Your AI Confidence Score</h1>
-  <div class="sub">Completed on ${date} · For your own private use</div>
-  <div class="overall">
-    <div class="num">${overall}</div>
-    <div class="lbl">Overall confidence (out of 100) — ${band(overall)}</div>
-  </div>
-  ${rows}
-  <div class="note">Scores are the average of your answers in each area on a 0–100 scale. The question about AI reducing the need for your skills is reverse scored, so higher scores always mean greater confidence.</div>
-</body>
-</html>`;
+  // Title
+  doc.setTextColor(...ink);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(18);
+  doc.text("Your AI Confidence Score", pageW / 2, 40, { align: "center" });
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setTextColor(...soft);
+  doc.text(`Completed on ${date} · For your own private use`, pageW / 2, 47, { align: "center" });
 
-  const blob = new Blob([html], { type: "text/html" });
-  const url = URL.createObjectURL(blob);
+  // Overall gauge (large, centered). Gauge images are 400x240 px.
+  const ratio = 240 / 400;
+  const ow = 76, oh = ow * ratio;
+  doc.addImage(gaugeImage(overall), "JPEG", (pageW - ow) / 2, 54, ow, oh);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(24);
+  doc.setTextColor(...teal);
+  doc.text(String(overall), pageW / 2, 54 + oh + 10, { align: "center" });
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setTextColor(...soft);
+  doc.text(`Overall confidence (out of 100) — ${band(overall)}`, pageW / 2, 54 + oh + 17, { align: "center" });
+
+  // Category gauges in a 2x2 grid
+  const gw = 58, gh = gw * ratio;
+  const colX = [pageW / 2 - gw - 9, pageW / 2 + 9];
+  const rowY = [130, 185];
+  CATEGORIES.forEach((c, i) => {
+    const x = colX[i % 2], y = rowY[Math.floor(i / 2)];
+    doc.addImage(gaugeImage(scores[c.name]), "JPEG", x, y, gw, gh);
+    const cxm = x + gw / 2;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(15);
+    doc.setTextColor(...ink);
+    doc.text(String(scores[c.name]), cxm, y + gh + 8, { align: "center" });
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text(c.name, cxm, y + gh + 14, { align: "center" });
+    doc.setFontSize(8.5);
+    doc.setTextColor(...soft);
+    doc.text(band(scores[c.name]), cxm, y + gh + 19, { align: "center" });
+  });
+
+  // Footer note
+  doc.setDrawColor(230, 234, 239);
+  doc.line(20, 270, pageW - 20, 270);
+  doc.setFontSize(8.5);
+  doc.setTextColor(...soft);
+  const note = "Scores are the average of your answers in each area on a 0–100 scale. The question about AI reducing the need for your skills is reverse scored, so higher scores always mean greater confidence.";
+  doc.text(doc.splitTextToSize(note, pageW - 40), 20, 276);
+
+  doc.save("ai-confidence-score.pdf");
+}
+
+document.getElementById("downloadBtn").addEventListener("click", () => {
+  if (window.jspdf && window.jspdf.jsPDF) {
+    downloadPdf();
+    return;
+  }
+  // jsPDF failed to load (e.g. offline): fall back to a plain-text summary.
+  const { scores, overall } = categoryScores();
+  const text = ["Your AI Confidence Score", "",
+    `Overall: ${overall} / 100 (${band(overall)})`, "",
+    ...CATEGORIES.map(c => `${c.name}: ${scores[c.name]} / 100 (${band(scores[c.name])})`)
+  ].join("\n");
+  const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
   const a = document.createElement("a");
   a.href = url;
-  a.download = "ai-confidence-score.html";
+  a.download = "ai-confidence-score.txt";
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -405,105 +441,6 @@ document.getElementById("downloadBtn").addEventListener("click", () => {
 
 render();
 
-// ---------------- Live results modal ----------------
-const modalOverlay = document.getElementById("modalOverlay");
-const modalCount = document.getElementById("modalCount");
-const gaugesEl = document.getElementById("gauges");
-const modalEmpty = document.getElementById("modalEmpty");
-
-const GAUGE_KEYS = [
-  { key: "capability",       label: "Capability" },
-  { key: "trust_governance", label: "Trust & Governance" },
-  { key: "support_adoption", label: "Support & Adoption" },
-  { key: "future_outlook",   label: "Future Outlook" }
-];
-
-// Semicircular arc from (20,100) to (180,100), radius 80.
-const ARC_LEN = Math.PI * 80;
-
-function buildGauges() {
-  gaugesEl.innerHTML = GAUGE_KEYS.map(g => `
-    <div class="gauge" data-key="${g.key}">
-      <svg viewBox="0 6 200 100" aria-hidden="true">
-        <path d="M 20 100 A 80 80 0 0 1 180 100" fill="none"
-              stroke="#e0f4f3" stroke-width="14" stroke-linecap="round"/>
-        <path class="g-arc" d="M 20 100 A 80 80 0 0 1 180 100" fill="none"
-              stroke="url(#gaugeGrad)" stroke-width="14" stroke-linecap="round"
-              stroke-dasharray="0 ${ARC_LEN}"/>
-        <line class="g-needle" x1="100" y1="100" x2="100" y2="34"
-              stroke="#1f2a37" stroke-width="3" stroke-linecap="round"
-              style="transform: rotate(-90deg)"/>
-        <circle cx="100" cy="100" r="6" fill="#1f2a37"/>
-      </svg>
-      <div class="g-value">–</div>
-      <div class="g-label">${g.label}</div>
-    </div>`).join("");
-}
-
-function setGauge(key, value) {
-  const el = gaugesEl.querySelector(`.gauge[data-key="${key}"]`);
-  if (!el) return;
-  const pct = Math.max(0, Math.min(100, value)) / 100;
-  el.querySelector(".g-arc").setAttribute("stroke-dasharray", `${pct * ARC_LEN} ${ARC_LEN}`);
-  el.querySelector(".g-needle").style.transform = `rotate(${pct * 180 - 90}deg)`;
-  el.querySelector(".g-value").textContent = value;
-}
-
-async function fetchAverages() {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/survey_averages`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "apikey": SUPABASE_KEY,
-      "Authorization": `Bearer ${SUPABASE_KEY}`
-    },
-    body: "{}"
-  });
-  if (!res.ok) throw new Error("fetch failed");
-  const data = await res.json();
-  return Array.isArray(data) ? data[0] : data;
-}
-
-let pollTimer = null;
-
-async function refreshGauges() {
-  try {
-    const avg = await fetchAverages();
-    if (!avg || !avg.response_count) {
-      gaugesEl.style.display = "none";
-      modalEmpty.style.display = "block";
-      modalCount.textContent = "";
-      return;
-    }
-    modalEmpty.style.display = "none";
-    gaugesEl.style.display = "grid";
-    modalCount.textContent = `Average confidence (0–100) · based on ${avg.response_count} response${avg.response_count === 1 ? "" : "s"} · updates live`;
-    GAUGE_KEYS.forEach(g => setGauge(g.key, Number(avg[g.key])));
-  } catch (e) {
-    gaugesEl.style.display = "none";
-    modalEmpty.textContent = "Results could not be loaded right now.";
-    modalEmpty.style.display = "block";
-    modalCount.textContent = "";
-  }
-}
-
-function openModal() {
-  buildGauges();
-  modalOverlay.classList.add("open");
-  refreshGauges();
-  pollTimer = setInterval(refreshGauges, 10000);
-}
-
-function closeModal() {
-  modalOverlay.classList.remove("open");
-  clearInterval(pollTimer);
-  pollTimer = null;
-}
-
-document.getElementById("liveResultsBtn").addEventListener("click", openModal);
-document.getElementById("modalClose").addEventListener("click", closeModal);
-modalOverlay.addEventListener("click", e => { if (e.target === modalOverlay) closeModal(); });
-document.addEventListener("keydown", e => { if (e.key === "Escape" && modalOverlay.classList.contains("open")) closeModal(); });
 </script>
 </body>
 </html>

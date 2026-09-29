@@ -120,7 +120,51 @@
   .done { text-align: center; display: none; }
   .done h2 { font-size: 1.4rem; font-weight: 600; margin-bottom: 12px; }
   .done p { color: var(--ink-soft); margin-bottom: 28px; line-height: 1.5; }
+  .done-actions { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
   .error-note { color: #c0392b; font-size: .85rem; margin-top: 16px; display: none; }
+
+  /* Live results modal */
+  .modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(31, 42, 55, .45);
+    display: none;
+    align-items: center; justify-content: center;
+    padding: 16px;
+    z-index: 10;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: #fff;
+    border-radius: 16px;
+    padding: 28px 28px 24px;
+    max-width: 560px;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 12px 40px rgba(0,0,0,.18);
+    position: relative;
+  }
+  .modal h3 { font-size: 1.15rem; font-weight: 600; text-align: center; }
+  .modal .count { text-align: center; color: var(--ink-soft); font-size: .85rem; margin: 6px 0 20px; }
+  .modal-close {
+    position: absolute; top: 14px; right: 14px;
+    width: 34px; height: 34px; padding: 0;
+    border-radius: 50%;
+    font-size: 1rem; line-height: 1;
+  }
+  .gauges {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px 16px;
+  }
+  @media (max-width: 480px) { .gauges { grid-template-columns: 1fr; } }
+  .gauge { text-align: center; }
+  .gauge svg { width: 100%; max-width: 200px; height: auto; display: block; margin: 0 auto; }
+  .gauge .g-value { font-size: 1.3rem; font-weight: 700; color: var(--ink); margin-top: 8px; }
+  .gauge .g-label { font-size: .85rem; color: var(--ink-soft); margin-top: 2px; }
+  .gauge .g-arc { transition: stroke-dasharray .9s ease; }
+  .gauge .g-needle { transition: transform .9s ease; transform-origin: 100px 100px; }
+  .modal-empty { text-align: center; color: var(--ink-soft); padding: 24px 0; display: none; }
 </style>
 </head>
 <body>
@@ -143,10 +187,32 @@
     <div class="done" id="done">
       <h2>Thank you</h2>
       <p>Your responses have been recorded anonymously.<br>Download your personal confidence score below — it is for your own private use.</p>
-      <button class="primary" id="downloadBtn">Download my results</button>
+      <div class="done-actions">
+        <button class="primary" id="downloadBtn">Download my results</button>
+        <button id="liveResultsBtn">View live results</button>
+      </div>
       <div class="error-note" id="errorNote"></div>
     </div>
   </main>
+
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <linearGradient id="gaugeGrad" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0%" stop-color="#00b2a9"/>
+        <stop offset="100%" stop-color="#2bace2"/>
+      </linearGradient>
+    </defs>
+  </svg>
+
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <button class="modal-close" id="modalClose" aria-label="Close">✕</button>
+      <h3 id="modalTitle">Live results across all respondents</h3>
+      <div class="count" id="modalCount"></div>
+      <div class="gauges" id="gauges"></div>
+      <div class="modal-empty" id="modalEmpty">No results are available yet.</div>
+    </div>
+  </div>
 
 <script>
 const SUPABASE_URL = "https://hjkrhmrdaqtgsqaoijxv.supabase.co";
@@ -338,6 +404,106 @@ document.getElementById("downloadBtn").addEventListener("click", () => {
 });
 
 render();
+
+// ---------------- Live results modal ----------------
+const modalOverlay = document.getElementById("modalOverlay");
+const modalCount = document.getElementById("modalCount");
+const gaugesEl = document.getElementById("gauges");
+const modalEmpty = document.getElementById("modalEmpty");
+
+const GAUGE_KEYS = [
+  { key: "capability",       label: "Capability" },
+  { key: "trust_governance", label: "Trust & Governance" },
+  { key: "support_adoption", label: "Support & Adoption" },
+  { key: "future_outlook",   label: "Future Outlook" }
+];
+
+// Semicircular arc from (20,100) to (180,100), radius 80.
+const ARC_LEN = Math.PI * 80;
+
+function buildGauges() {
+  gaugesEl.innerHTML = GAUGE_KEYS.map(g => `
+    <div class="gauge" data-key="${g.key}">
+      <svg viewBox="0 6 200 100" aria-hidden="true">
+        <path d="M 20 100 A 80 80 0 0 1 180 100" fill="none"
+              stroke="#e0f4f3" stroke-width="14" stroke-linecap="round"/>
+        <path class="g-arc" d="M 20 100 A 80 80 0 0 1 180 100" fill="none"
+              stroke="url(#gaugeGrad)" stroke-width="14" stroke-linecap="round"
+              stroke-dasharray="0 ${ARC_LEN}"/>
+        <line class="g-needle" x1="100" y1="100" x2="100" y2="34"
+              stroke="#1f2a37" stroke-width="3" stroke-linecap="round"
+              style="transform: rotate(-90deg)"/>
+        <circle cx="100" cy="100" r="6" fill="#1f2a37"/>
+      </svg>
+      <div class="g-value">–</div>
+      <div class="g-label">${g.label}</div>
+    </div>`).join("");
+}
+
+function setGauge(key, value) {
+  const el = gaugesEl.querySelector(`.gauge[data-key="${key}"]`);
+  if (!el) return;
+  const pct = Math.max(0, Math.min(100, value)) / 100;
+  el.querySelector(".g-arc").setAttribute("stroke-dasharray", `${pct * ARC_LEN} ${ARC_LEN}`);
+  el.querySelector(".g-needle").style.transform = `rotate(${pct * 180 - 90}deg)`;
+  el.querySelector(".g-value").textContent = value;
+}
+
+async function fetchAverages() {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/survey_averages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": SUPABASE_KEY,
+      "Authorization": `Bearer ${SUPABASE_KEY}`
+    },
+    body: "{}"
+  });
+  if (!res.ok) throw new Error("fetch failed");
+  const data = await res.json();
+  return Array.isArray(data) ? data[0] : data;
+}
+
+let pollTimer = null;
+
+async function refreshGauges() {
+  try {
+    const avg = await fetchAverages();
+    if (!avg || !avg.response_count) {
+      gaugesEl.style.display = "none";
+      modalEmpty.style.display = "block";
+      modalCount.textContent = "";
+      return;
+    }
+    modalEmpty.style.display = "none";
+    gaugesEl.style.display = "grid";
+    modalCount.textContent = `Average confidence (0–100) · based on ${avg.response_count} response${avg.response_count === 1 ? "" : "s"} · updates live`;
+    GAUGE_KEYS.forEach(g => setGauge(g.key, Number(avg[g.key])));
+  } catch (e) {
+    gaugesEl.style.display = "none";
+    modalEmpty.textContent = "Results could not be loaded right now.";
+    modalEmpty.style.display = "block";
+    modalCount.textContent = "";
+  }
+}
+
+function openModal() {
+  buildGauges();
+  modalOverlay.classList.add("open");
+  refreshGauges();
+  pollTimer = setInterval(refreshGauges, 10000);
+}
+
+function closeModal() {
+  modalOverlay.classList.remove("open");
+  clearInterval(pollTimer);
+  pollTimer = null;
+}
+
+document.getElementById("liveResultsBtn").addEventListener("click", openModal);
+document.getElementById("modalClose").addEventListener("click", closeModal);
+modalOverlay.addEventListener("click", e => { if (e.target === modalOverlay) closeModal(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && modalOverlay.classList.contains("open")) closeModal(); });
 </script>
 </body>
 </html>
